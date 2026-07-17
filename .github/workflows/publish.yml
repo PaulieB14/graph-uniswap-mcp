@@ -11,6 +11,9 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # lets npm attach a provenance attestation (the verified badge)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,6 +42,6 @@ jobs:
           if npm view "$NAME@$VER" version >/dev/null 2>&1; then
             echo "$NAME@$VER already published — nothing to do."
           else
-            npm publish --access public
-            echo "published $NAME@$VER"
+            npm publish --access public --provenance
+            echo "published $NAME@$VER (with provenance)"
           fi

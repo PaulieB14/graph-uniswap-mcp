@@ -1,6 +1,9 @@
 # Graph Uniswap MCP
 
-[![npm](https://img.shields.io/npm/v/graph-uniswap-mcp)](https://www.npmjs.com/package/graph-uniswap-mcp)
+[![npm version](https://img.shields.io/npm/v/graph-uniswap-mcp)](https://www.npmjs.com/package/graph-uniswap-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/graph-uniswap-mcp)](https://www.npmjs.com/package/graph-uniswap-mcp)
+[![license](https://img.shields.io/npm/l/graph-uniswap-mcp)](LICENSE)
+[![node](https://img.shields.io/node/v/graph-uniswap-mcp)](https://nodejs.org)
 
 One MCP interface over **Uniswap V2, V3, and V4** across **Ethereum, Arbitrum, Base, Polygon, Optimism, and BSC** — powered by [The Graph](https://thegraph.com). Ask an agent for a price, the top pools, a pair, or recent swaps on *any* Uniswap deployment and get back clean JSON.
 

@@ -13,7 +13,7 @@ import {
   poolInfo, recentSwaps, rawQuery,
 } from "./tools.js";
 
-const server = new McpServer({ name: "graph-uniswap-mcp", version: "0.2.1" });
+const server = new McpServer({ name: "graph-uniswap-mcp", version: "0.2.2" });
 
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 const wrap = (fn: (a: any) => Promise<unknown>) => async (a: any) => {

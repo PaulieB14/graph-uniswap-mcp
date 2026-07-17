@@ -1,12 +1,22 @@
 {
   "name": "graph-uniswap-mcp",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Graph Uniswap MCP — Uniswap V2/V3/V4 across Ethereum, Arbitrum, Base, Polygon, Optimism & BSC, powered by The Graph. Self-healing subgraph resolution, schema-adaptive, ranks by volume not (gamed) TVL. Prices, pools, swaps, and a raw GraphQL escape hatch for any AI agent.",
   "type": "module",
+  "author": "PaulieB14",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PaulieB14/graph-uniswap-mcp.git"
+  },
+  "homepage": "https://github.com/PaulieB14/graph-uniswap-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/PaulieB14/graph-uniswap-mcp/issues"
+  },
   "bin": {
     "graph-uniswap-mcp": "dist/index.js"
   },
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "files": [
     "dist",
     "README.md",
