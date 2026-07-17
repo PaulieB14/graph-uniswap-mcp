@@ -1,0 +1,48 @@
+{
+  "name": "uniswap-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Uniswap V2/V3/V4 across Ethereum, Arbitrum, Base, Polygon, Optimism & BSC — powered by The Graph. Self-healing subgraph resolution, schema-adaptive, ranks by volume not (gamed) TVL. Prices, pools, swaps, and a raw GraphQL escape hatch for any AI agent.",
+  "type": "module",
+  "bin": {
+    "uniswap-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "uniswap",
+    "uniswap-v4",
+    "uniswap-v3",
+    "thegraph",
+    "subgraph",
+    "defi",
+    "dex",
+    "onchain",
+    "agents",
+    "ai"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
