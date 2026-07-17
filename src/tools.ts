@@ -6,8 +6,8 @@
  *    pricing — a single fake pool can report trillions), and flags TVL as such.
  */
 import {
-  Chain, Version, resolveMarket, normalizeChain, normalizeVersion,
-  MARKETS, SUPPORTED_CHAINS, setMarketOverride,
+  Chain, Version, Market, resolveMarket, resolveMarketCandidates,
+  normalizeChain, normalizeVersion, MARKETS, SUPPORTED_CHAINS, setMarketOverride,
 } from "./markets.js";
 import { gqlQuery, getProfile, getNativePrice, num } from "./graph.js";
 
@@ -26,6 +26,35 @@ function pickVersion(version?: string): Version | undefined {
   const v = normalizeVersion(version);
   if (!v) throw new Error(`Unknown version "${version}". Use v2, v3, or v4.`);
   return v;
+}
+
+/**
+ * Run `fn` against the best market for (chain, version). If the caller did NOT
+ * pin a version and the top market's indexers are unservable (fn THROWS — e.g. a
+ * gateway timeout or "bad indexers"), transparently fall back to the next-
+ * highest-volume version so the call still returns real data. A pinned version is
+ * tried alone — we never silently answer for a different version than asked.
+ * Empty-but-valid results (a legit "no pool") do NOT trigger fallback; only
+ * servability failures do. `served` reports which version actually answered.
+ */
+async function withMarket<T>(
+  chain: Chain,
+  version: Version | undefined,
+  fn: (m: Market) => Promise<T>,
+): Promise<T & { served?: { version: Version; fell_back: boolean } }> {
+  const candidates = resolveMarketCandidates(chain, version);
+  const list = version ? candidates.slice(0, 1) : candidates;
+  let lastErr: unknown;
+  for (let i = 0; i < list.length; i++) {
+    try {
+      const out = await fn(list[i]);
+      const served = { version: list[i].version, fell_back: i > 0 };
+      return out && typeof out === "object" ? { ...out, served } : (out as any);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 /** Resolve a token (symbol or address) to its canonical record on this subgraph. */
@@ -141,185 +170,193 @@ export async function discoverMarkets(args: { chain?: string; version?: string; 
 
 export async function getTokenPrice(args: { token: string; chain: string; version?: string }) {
   const chain = pickChain(args.chain);
-  const m = resolveMarket(chain, pickVersion(args.version));
-  const p = await getProfile(m.subgraphId);
-  if (!p.tokenDerivedField || !p.bundlePriceField)
-    throw new Error("This subgraph has no derived-price fields; try raw_query.");
-  const [nativePrice, tok] = await Promise.all([
-    getNativePrice(m.subgraphId, p),
-    resolveToken(m.subgraphId, p.tokenDerivedField, args.token),
-  ]);
-  if (!tok) throw new Error(`Token "${args.token}" not found on Uniswap ${m.version} ${chain}.`);
-  const derived = num(tok[p.tokenDerivedField]);
-  const priceUsd = nativePrice != null ? derived * nativePrice : null;
-  return {
-    market: { version: m.version, chain, network: m.network, subgraph_id: m.subgraphId },
-    token: { address: tok.id, symbol: tok.symbol, name: tok.name, decimals: num(tok.decimals) },
-    price_usd: priceUsd,
-    native_price_usd: nativePrice,
-    priced_via: `${p.tokenDerivedField} × ${p.bundlePriceField}`,
-    note: "price_usd is derived on-chain; sanity-check a stablecoin (should read ~$1).",
-  };
+  const version = pickVersion(args.version);
+  return withMarket(chain, version, async (m) => {
+    const p = await getProfile(m.subgraphId);
+    if (!p.tokenDerivedField || !p.bundlePriceField)
+      throw new Error("This subgraph has no derived-price fields; try raw_query.");
+    const [nativePrice, tok] = await Promise.all([
+      getNativePrice(m.subgraphId, p),
+      resolveToken(m.subgraphId, p.tokenDerivedField, args.token),
+    ]);
+    if (!tok) throw new Error(`Token "${args.token}" not found on Uniswap ${m.version} ${chain}.`);
+    const derived = num(tok[p.tokenDerivedField]);
+    const priceUsd = nativePrice != null ? derived * nativePrice : null;
+    return {
+      market: { version: m.version, chain, network: m.network, subgraph_id: m.subgraphId },
+      token: { address: tok.id, symbol: tok.symbol, name: tok.name, decimals: num(tok.decimals) },
+      price_usd: priceUsd,
+      native_price_usd: nativePrice,
+      priced_via: `${p.tokenDerivedField} × ${p.bundlePriceField}`,
+      note: "price_usd is derived on-chain; sanity-check a stablecoin (should read ~$1).",
+    };
+  });
 }
 
 export async function topPools(args: { chain: string; version?: string; first?: number }) {
   const chain = pickChain(args.chain);
-  const m = resolveMarket(chain, pickVersion(args.version));
-  const p = await getProfile(m.subgraphId);
+  const version = pickVersion(args.version);
   const n = Math.min(Math.max(args.first ?? 10, 1), 50);
-
-  if (p.style === "pair") {
-    const d = await gqlQuery<{ pairs: any[] }>(
+  return withMarket(chain, version, async (m) => {
+    const p = await getProfile(m.subgraphId);
+    if (p.style === "pair") {
+      const d = await gqlQuery<{ pairs: any[] }>(
+        m.subgraphId,
+        `query($n:Int!){ pairs(first:$n, orderBy:volumeUSD, orderDirection:desc){
+          id token0{symbol id} token1{symbol id} volumeUSD reserveUSD txCount } }`,
+        { n },
+      );
+      return {
+        market: { version: m.version, chain, subgraph_id: m.subgraphId },
+        ranked_by: "volumeUSD (lifetime)",
+        pools: (d.pairs ?? []).map((x) => ({
+          pair: x.id, pair_name: `${x.token0.symbol}/${x.token1.symbol}`,
+          volume_usd: num(x.volumeUSD), reserve_usd: num(x.reserveUSD), tx_count: num(x.txCount),
+        })),
+        note: TVL_NOTE,
+      };
+    }
+    const d = await gqlQuery<{ pools: any[] }>(
       m.subgraphId,
-      `query($n:Int!){ pairs(first:$n, orderBy:volumeUSD, orderDirection:desc){
-        id token0{symbol id} token1{symbol id} volumeUSD reserveUSD txCount } }`,
+      `query($n:Int!){ pools(first:$n, orderBy:volumeUSD, orderDirection:desc){
+        id token0{symbol id} token1{symbol id} feeTier volumeUSD feesUSD totalValueLockedUSD txCount } }`,
       { n },
     );
     return {
       market: { version: m.version, chain, subgraph_id: m.subgraphId },
       ranked_by: "volumeUSD (lifetime)",
-      pools: (d.pairs ?? []).map((x) => ({
-        pair: x.id, pair_name: `${x.token0.symbol}/${x.token1.symbol}`,
-        volume_usd: num(x.volumeUSD), reserve_usd: num(x.reserveUSD), tx_count: num(x.txCount),
+      pools: (d.pools ?? []).map((x) => ({
+        pool: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`,
+        fee_tier: num(x.feeTier), volume_usd: num(x.volumeUSD), fees_usd: num(x.feesUSD),
+        tvl_usd: num(x.totalValueLockedUSD), tx_count: num(x.txCount),
       })),
       note: TVL_NOTE,
     };
-  }
-  const d = await gqlQuery<{ pools: any[] }>(
-    m.subgraphId,
-    `query($n:Int!){ pools(first:$n, orderBy:volumeUSD, orderDirection:desc){
-      id token0{symbol id} token1{symbol id} feeTier volumeUSD feesUSD totalValueLockedUSD txCount } }`,
-    { n },
-  );
-  return {
-    market: { version: m.version, chain, subgraph_id: m.subgraphId },
-    ranked_by: "volumeUSD (lifetime)",
-    pools: (d.pools ?? []).map((x) => ({
-      pool: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`,
-      fee_tier: num(x.feeTier), volume_usd: num(x.volumeUSD), fees_usd: num(x.feesUSD),
-      tvl_usd: num(x.totalValueLockedUSD), tx_count: num(x.txCount),
-    })),
-    note: TVL_NOTE,
-  };
+  });
 }
 
 export async function findPool(args: { tokenA: string; tokenB: string; chain: string; version?: string }) {
   const chain = pickChain(args.chain);
-  const m = resolveMarket(chain, pickVersion(args.version));
-  const p = await getProfile(m.subgraphId);
-  const derived = p.tokenDerivedField ?? "derivedETH";
-  const [a, b] = await Promise.all([
-    resolveToken(m.subgraphId, derived, args.tokenA),
-    resolveToken(m.subgraphId, derived, args.tokenB),
-  ]);
-  if (!a || !b) throw new Error(`Could not resolve ${!a ? args.tokenA : args.tokenB} on ${m.version} ${chain}.`);
-  const ids = [a.id, b.id];
+  const version = pickVersion(args.version);
+  return withMarket(chain, version, async (m) => {
+    const p = await getProfile(m.subgraphId);
+    const derived = p.tokenDerivedField ?? "derivedETH";
+    const [a, b] = await Promise.all([
+      resolveToken(m.subgraphId, derived, args.tokenA),
+      resolveToken(m.subgraphId, derived, args.tokenB),
+    ]);
+    if (!a || !b) throw new Error(`Could not resolve ${!a ? args.tokenA : args.tokenB} on ${m.version} ${chain}.`);
+    const ids = [a.id, b.id];
 
-  const entity = p.style === "pair" ? "pairs" : "pools";
-  const fee = p.style === "pair" ? "" : "feeTier";
-  const tvl = p.style === "pair" ? "reserveUSD" : "totalValueLockedUSD";
-  const d = await gqlQuery<any>(
-    m.subgraphId,
-    `query($ids:[String!]){ ${entity}(where:{token0_in:$ids, token1_in:$ids}, orderBy:volumeUSD, orderDirection:desc){
-      id token0{symbol} token1{symbol} ${fee} volumeUSD ${tvl} txCount } }`,
-    { ids },
-  );
-  const rows = d[entity] ?? [];
-  return {
-    market: { version: m.version, chain, subgraph_id: m.subgraphId },
-    tokens: { a: { symbol: a.symbol, address: a.id }, b: { symbol: b.symbol, address: b.id } },
-    pools: rows.map((x: any) => ({
-      id: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`,
-      ...(p.style === "pool" ? { fee_tier: num(x.feeTier) } : {}),
-      volume_usd: num(x.volumeUSD), tvl_usd: num(x[tvl]), tx_count: num(x.txCount),
-    })),
-    note: rows.length ? TVL_NOTE : "No pool found for this pair on this version/chain — try another version (v2/v3/v4).",
-  };
+    const entity = p.style === "pair" ? "pairs" : "pools";
+    const fee = p.style === "pair" ? "" : "feeTier";
+    const tvl = p.style === "pair" ? "reserveUSD" : "totalValueLockedUSD";
+    const d = await gqlQuery<any>(
+      m.subgraphId,
+      `query($ids:[String!]){ ${entity}(where:{token0_in:$ids, token1_in:$ids}, orderBy:volumeUSD, orderDirection:desc){
+        id token0{symbol} token1{symbol} ${fee} volumeUSD ${tvl} txCount } }`,
+      { ids },
+    );
+    const rows = d[entity] ?? [];
+    return {
+      market: { version: m.version, chain, subgraph_id: m.subgraphId },
+      tokens: { a: { symbol: a.symbol, address: a.id }, b: { symbol: b.symbol, address: b.id } },
+      pools: rows.map((x: any) => ({
+        id: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`,
+        ...(p.style === "pool" ? { fee_tier: num(x.feeTier) } : {}),
+        volume_usd: num(x.volumeUSD), tvl_usd: num(x[tvl]), tx_count: num(x.txCount),
+      })),
+      note: rows.length ? TVL_NOTE : "No pool found for this pair on this version/chain — try another version (v2/v3/v4).",
+    };
+  });
 }
 
 export async function poolInfo(args: { pool: string; chain: string; version?: string }) {
   const chain = pickChain(args.chain);
-  const m = resolveMarket(chain, pickVersion(args.version));
-  const p = await getProfile(m.subgraphId);
+  const version = pickVersion(args.version);
   const id = args.pool.trim().toLowerCase();
-  if (p.style === "pair") {
-    const d = await gqlQuery<{ pairs: any[] }>(
+  return withMarket(chain, version, async (m) => {
+    const p = await getProfile(m.subgraphId);
+    if (p.style === "pair") {
+      const d = await gqlQuery<{ pairs: any[] }>(
+        m.subgraphId,
+        `query($id:ID!){ pairs(where:{id:$id}){ id token0{symbol id} token1{symbol id}
+          reserve0 reserve1 reserveUSD token0Price token1Price volumeUSD txCount } }`,
+        { id },
+      );
+      const x = d.pairs?.[0];
+      if (!x) throw new Error(`Pair ${args.pool} not found on Uniswap ${m.version} ${chain}.`);
+      return {
+        market: { version: m.version, chain, subgraph_id: m.subgraphId },
+        pair: x.id, tokens: `${x.token0.symbol}/${x.token1.symbol}`,
+        token0Price: num(x.token0Price), token1Price: num(x.token1Price),
+        reserve0: num(x.reserve0), reserve1: num(x.reserve1), reserve_usd: num(x.reserveUSD),
+        volume_usd: num(x.volumeUSD), tx_count: num(x.txCount), note: TVL_NOTE,
+      };
+    }
+    const d = await gqlQuery<{ pools: any[] }>(
       m.subgraphId,
-      `query($id:ID!){ pairs(where:{id:$id}){ id token0{symbol id} token1{symbol id}
-        reserve0 reserve1 reserveUSD token0Price token1Price volumeUSD txCount } }`,
+      `query($id:ID!){ pools(where:{id:$id}){ id token0{symbol id} token1{symbol id}
+        feeTier liquidity token0Price token1Price volumeUSD feesUSD totalValueLockedUSD
+        totalValueLockedToken0 totalValueLockedToken1 txCount } }`,
       { id },
     );
-    const x = d.pairs?.[0];
-    if (!x) throw new Error(`Pair ${args.pool} not found on Uniswap ${m.version} ${chain}.`);
+    const x = d.pools?.[0];
+    if (!x) throw new Error(`Pool ${args.pool} not found on Uniswap ${m.version} ${chain}.`);
     return {
       market: { version: m.version, chain, subgraph_id: m.subgraphId },
-      pair: x.id, tokens: `${x.token0.symbol}/${x.token1.symbol}`,
+      pool: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`, fee_tier: num(x.feeTier),
       token0Price: num(x.token0Price), token1Price: num(x.token1Price),
-      reserve0: num(x.reserve0), reserve1: num(x.reserve1), reserve_usd: num(x.reserveUSD),
-      volume_usd: num(x.volumeUSD), tx_count: num(x.txCount), note: TVL_NOTE,
+      volume_usd: num(x.volumeUSD), fees_usd: num(x.feesUSD), tvl_usd: num(x.totalValueLockedUSD),
+      tvl_token0: num(x.totalValueLockedToken0), tvl_token1: num(x.totalValueLockedToken1),
+      tx_count: num(x.txCount), note: TVL_NOTE,
     };
-  }
-  const d = await gqlQuery<{ pools: any[] }>(
-    m.subgraphId,
-    `query($id:ID!){ pools(where:{id:$id}){ id token0{symbol id} token1{symbol id}
-      feeTier liquidity token0Price token1Price volumeUSD feesUSD totalValueLockedUSD
-      totalValueLockedToken0 totalValueLockedToken1 txCount } }`,
-    { id },
-  );
-  const x = d.pools?.[0];
-  if (!x) throw new Error(`Pool ${args.pool} not found on Uniswap ${m.version} ${chain}.`);
-  return {
-    market: { version: m.version, chain, subgraph_id: m.subgraphId },
-    pool: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`, fee_tier: num(x.feeTier),
-    token0Price: num(x.token0Price), token1Price: num(x.token1Price),
-    volume_usd: num(x.volumeUSD), fees_usd: num(x.feesUSD), tvl_usd: num(x.totalValueLockedUSD),
-    tvl_token0: num(x.totalValueLockedToken0), tvl_token1: num(x.totalValueLockedToken1),
-    tx_count: num(x.txCount), note: TVL_NOTE,
-  };
+  });
 }
 
 export async function recentSwaps(args: { chain: string; version?: string; pool?: string; first?: number }) {
   const chain = pickChain(args.chain);
-  const m = resolveMarket(chain, pickVersion(args.version));
-  const p = await getProfile(m.subgraphId);
+  const version = pickVersion(args.version);
   const n = Math.min(Math.max(args.first ?? 10, 1), 50);
   const poolId = args.pool?.trim().toLowerCase();
-
-  if (p.style === "pair") {
-    const where = poolId ? `where:{pair:"${poolId}"}, ` : "";
+  return withMarket(chain, version, async (m) => {
+    const p = await getProfile(m.subgraphId);
+    if (p.style === "pair") {
+      const where = poolId ? `where:{pair:"${poolId}"}, ` : "";
+      const d = await gqlQuery<{ swaps: any[] }>(
+        m.subgraphId,
+        `query($n:Int!){ swaps(first:$n, ${where}orderBy:timestamp, orderDirection:desc){
+          timestamp amountUSD amount0In amount1In amount0Out amount1Out from to
+          pair{ token0{symbol} token1{symbol} } } }`,
+        { n },
+      );
+      return {
+        market: { version: m.version, chain, subgraph_id: m.subgraphId },
+        swaps: (d.swaps ?? []).map((s) => ({
+          timestamp: num(s.timestamp), time_utc: new Date(num(s.timestamp) * 1000).toISOString(),
+          pair: `${s.pair.token0.symbol}/${s.pair.token1.symbol}`, amount_usd: num(s.amountUSD),
+          in: `${num(s.amount0In) || num(s.amount1In)}`, out: `${num(s.amount0Out) || num(s.amount1Out)}`,
+          trader: s.from,
+        })),
+      };
+    }
+    const where = poolId ? `where:{pool:"${poolId}"}, ` : "";
     const d = await gqlQuery<{ swaps: any[] }>(
       m.subgraphId,
       `query($n:Int!){ swaps(first:$n, ${where}orderBy:timestamp, orderDirection:desc){
-        timestamp amountUSD amount0In amount1In amount0Out amount1Out from to
-        pair{ token0{symbol} token1{symbol} } } }`,
+        timestamp amountUSD amount0 amount1 origin sender
+        token0{symbol} token1{symbol} } }`,
       { n },
     );
     return {
       market: { version: m.version, chain, subgraph_id: m.subgraphId },
       swaps: (d.swaps ?? []).map((s) => ({
         timestamp: num(s.timestamp), time_utc: new Date(num(s.timestamp) * 1000).toISOString(),
-        pair: `${s.pair.token0.symbol}/${s.pair.token1.symbol}`, amount_usd: num(s.amountUSD),
-        in: `${num(s.amount0In) || num(s.amount1In)}`, out: `${num(s.amount0Out) || num(s.amount1Out)}`,
-        trader: s.from,
+        pair: `${s.token0.symbol}/${s.token1.symbol}`, amount_usd: num(s.amountUSD),
+        amount0: num(s.amount0), amount1: num(s.amount1), trader: s.origin ?? s.sender,
       })),
     };
-  }
-  const where = poolId ? `where:{pool:"${poolId}"}, ` : "";
-  const d = await gqlQuery<{ swaps: any[] }>(
-    m.subgraphId,
-    `query($n:Int!){ swaps(first:$n, ${where}orderBy:timestamp, orderDirection:desc){
-      timestamp amountUSD amount0 amount1 origin sender
-      token0{symbol} token1{symbol} } }`,
-    { n },
-  );
-  return {
-    market: { version: m.version, chain, subgraph_id: m.subgraphId },
-    swaps: (d.swaps ?? []).map((s) => ({
-      timestamp: num(s.timestamp), time_utc: new Date(num(s.timestamp) * 1000).toISOString(),
-      pair: `${s.token0.symbol}/${s.token1.symbol}`, amount_usd: num(s.amountUSD),
-      amount0: num(s.amount0), amount1: num(s.amount1), trader: s.origin ?? s.sender,
-    })),
-  };
+  });
 }
 
 export async function rawQuery(args: { chain: string; version?: string; query: string; variables?: Record<string, unknown> }) {

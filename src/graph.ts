@@ -30,29 +30,76 @@ function isIndexerLag(errors: any[]): boolean {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Run a GraphQL query against a subgraph id, with a small retry for gateway routing hiccups. */
+// A gateway indexer can accept the TCP connection and then never respond. Without
+// an AbortController that hangs the whole tool call (observed: 45s+ on some
+// base/optimism queries). These bounds make a stalled indexer fail FAST — each
+// attempt is time-boxed, only transient failures retry, and the total retry
+// budget is capped — so callers get a quick clean error (and the tools can fall
+// back to another version) instead of an indefinite hang. All tunable via env.
+// 20s is generous enough for a legitimately slow ordered query and lets the
+// gateway's own ~15s "bad indexers" message surface (more useful than a bare
+// timeout), while still bounding a truly stalled indexer that would otherwise
+// hang forever. Retries are reserved for recoverable failures (lag/5xx/network);
+// a stall (abort) fails fast so the tools can fall back to another version.
+const HTTP_TIMEOUT_MS = Number(process.env.GRAPH_HTTP_TIMEOUT_MS) || 15000;
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.GRAPH_MAX_ATTEMPTS) || 2);
+const TOTAL_BUDGET_MS = Number(process.env.GRAPH_TOTAL_BUDGET_MS) || 25000;
+
+export interface QueryOpts {
+  /** per-attempt HTTP timeout in ms (default GRAPH_HTTP_TIMEOUT_MS / 8000) */
+  timeoutMs?: number;
+  /** max attempts including the first (default GRAPH_MAX_ATTEMPTS / 2) */
+  maxAttempts?: number;
+}
+
+const isAbort = (e: unknown): boolean => (e as { name?: string })?.name === "AbortError";
+const timeoutError = (ms: number, id: string) =>
+  new Error(`gateway request timed out after ${ms}ms — the routed indexer for subgraph ${id} was unresponsive.`);
+
+/**
+ * Run a GraphQL query against a subgraph id. Each attempt is time-bounded by an
+ * AbortController, and ONLY transient failures retry (timeout, network drop,
+ * 5xx/429, genuine indexer lag/routing). A deterministic error — a bad query, a
+ * 4xx, a real subgraph error — is thrown immediately instead of being looped 3×.
+ */
 export async function gqlQuery<T = any>(
   subgraphId: string,
   query: string,
   variables: Record<string, unknown> = {},
+  opts: QueryOpts = {},
 ): Promise<T> {
   const url = `${GATEWAY}/${apiKey()}/subgraphs/id/${subgraphId}`;
+  const timeoutMs = opts.timeoutMs ?? HTTP_TIMEOUT_MS;
+  const maxAttempts = opts.maxAttempts ?? MAX_ATTEMPTS;
+  const start = Date.now();
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0 && Date.now() - start > TOTAL_BUDGET_MS) break; // out of budget
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ query, variables }),
+        signal: ctrl.signal,
       });
       if (!res.ok) {
-        // 4xx/5xx from the gateway itself
         const body = await res.text().catch(() => "");
-        throw new Error(`gateway HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+        const err = new Error(`gateway HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`);
+        // 5xx / 429 are transient → retry; other 4xx are deterministic → throw.
+        if ((res.status >= 500 || res.status === 429) && attempt < maxAttempts - 1) {
+          lastErr = err;
+          await sleep(400 * (attempt + 1));
+          continue;
+        }
+        throw err;
       }
       const json = (await res.json()) as { data?: T; errors?: any[] };
       if (json.errors && json.errors.length) {
-        if (isIndexerLag(json.errors) && attempt < 2) {
+        // Indexer lag/routing: a fresh request may land on a healthy indexer.
+        if (isIndexerLag(json.errors) && attempt < maxAttempts - 1) {
           await sleep(600 * (attempt + 1));
           continue;
         }
@@ -61,9 +108,23 @@ export async function gqlQuery<T = any>(
       return json.data as T;
     } catch (e) {
       lastErr = e;
-      if (attempt < 2) await sleep(400 * (attempt + 1));
+      const msg = e instanceof Error ? e.message : String(e);
+      // Deterministic — never retry these.
+      if (msg.startsWith("subgraph query error:") || msg.startsWith("gateway HTTP ")) throw e;
+      // A stall (abort/timeout) will almost certainly re-stall on retry — fail
+      // fast so the caller can fall back to another version instead of burning
+      // another full timeout on the same unresponsive indexer.
+      if (isAbort(e)) throw timeoutError(timeoutMs, subgraphId);
+      // Genuine network error (connection reset, DNS, etc.) — retry if attempts remain.
+      if (attempt < maxAttempts - 1) {
+        await sleep(400 * (attempt + 1));
+        continue;
+      }
+    } finally {
+      clearTimeout(timer);
     }
   }
+  if (isAbort(lastErr)) throw timeoutError(timeoutMs, subgraphId);
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 

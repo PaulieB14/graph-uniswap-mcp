@@ -1,6 +1,6 @@
 {
   "name": "graph-uniswap-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Graph Uniswap MCP — Uniswap V2/V3/V4 across Ethereum, Arbitrum, Base, Polygon, Optimism & BSC, powered by The Graph. Self-healing subgraph resolution, schema-adaptive, ranks by volume not (gamed) TVL. Prices, pools, swaps, and a raw GraphQL escape hatch for any AI agent.",
   "type": "module",
   "bin": {

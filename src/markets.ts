@@ -91,11 +91,13 @@ export function setMarketOverride(v: Version, c: Chain, subgraphId: string) {
 }
 
 /**
- * Resolve the subgraph id for a (version, chain). Runtime overrides win, then
- * the seeded map. If `version` is omitted, pick the highest-volume version that
- * exists on the chain (v4 → v3 → v2 by popularity, per-chain).
+ * Ordered candidate markets for a chain, highest-volume version first (with any
+ * runtime override applied). If `version` is given, only that version. The tools
+ * use this to fall back to the next-best version when the top one's indexers are
+ * unservable — the self-healing that `discover_markets` advertises, on the data
+ * path. Throws if the chain (or chain+version) has no mapped subgraph.
  */
-export function resolveMarket(chain: Chain, version?: Version): Market {
+export function resolveMarketCandidates(chain: Chain, version?: Version): Market[] {
   const candidates = MARKETS.filter((m) => m.chain === chain && (!version || m.version === version));
   if (candidates.length === 0) {
     const have = MARKETS.filter((m) => m.chain === chain).map((m) => m.version);
@@ -105,12 +107,21 @@ export function resolveMarket(chain: Chain, version?: Version): Market {
         : `No Uniswap subgraph is mapped for chain "${chain}".`,
     );
   }
-  // Default version = the one with the most traffic on this chain.
-  const best = candidates.sort(
-    (a, b) => (b.approxQueriesPerDay ?? 0) - (a.approxQueriesPerDay ?? 0),
-  )[0];
-  const override = OVERRIDES.get(key(best.version, chain));
-  return override ? { ...best, subgraphId: override } : best;
+  return candidates
+    .sort((a, b) => (b.approxQueriesPerDay ?? 0) - (a.approxQueriesPerDay ?? 0))
+    .map((m) => {
+      const override = OVERRIDES.get(key(m.version, chain));
+      return override ? { ...m, subgraphId: override } : m;
+    });
+}
+
+/**
+ * Resolve the single best subgraph for a (version, chain). Runtime overrides win,
+ * then the seeded map. If `version` is omitted, pick the highest-volume version
+ * that exists on the chain (v4 → v3 → v2 by popularity, per-chain).
+ */
+export function resolveMarket(chain: Chain, version?: Version): Market {
+  return resolveMarketCandidates(chain, version)[0];
 }
 
 export const SUPPORTED_CHAINS: Chain[] = ["ethereum", "arbitrum", "base", "polygon", "optimism", "bsc"];
