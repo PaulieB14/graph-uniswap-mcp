@@ -1,4 +1,6 @@
-# Uniswap MCP
+# Graph Uniswap MCP
+
+[![npm](https://img.shields.io/npm/v/graph-uniswap-mcp)](https://www.npmjs.com/package/graph-uniswap-mcp)
 
 One MCP interface over **Uniswap V2, V3, and V4** across **Ethereum, Arbitrum, Base, Polygon, Optimism, and BSC** — powered by [The Graph](https://thegraph.com). Ask an agent for a price, the top pools, a pair, or recent swaps on *any* Uniswap deployment and get back clean JSON.
 
@@ -35,9 +37,9 @@ Get a free Graph gateway API key at <https://thegraph.com/studio> (Billing → A
 ```json
 {
   "mcpServers": {
-    "uniswap": {
+    "graph-uniswap": {
       "command": "npx",
-      "args": ["-y", "uniswap-mcp"],
+      "args": ["-y", "graph-uniswap-mcp"],
       "env": { "GRAPH_API_KEY": "your_key_here" }
     }
   }

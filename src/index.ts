@@ -13,7 +13,7 @@ import {
   poolInfo, recentSwaps, rawQuery,
 } from "./tools.js";
 
-const server = new McpServer({ name: "uniswap-mcp", version: "0.1.0" });
+const server = new McpServer({ name: "graph-uniswap-mcp", version: "0.1.0" });
 
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 const wrap = (fn: (a: any) => Promise<unknown>) => async (a: any) => {
@@ -90,7 +90,7 @@ server.tool(
 async function main() {
   await server.connect(new StdioServerTransport());
   // stderr so it doesn't corrupt the stdio JSON-RPC channel
-  console.error("uniswap-mcp running (stdio). Set GRAPH_API_KEY in the environment.");
+  console.error("graph-uniswap-mcp running (stdio). Set GRAPH_API_KEY in the environment.");
 }
 main().catch((e) => {
   console.error("fatal:", e);
