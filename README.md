@@ -68,7 +68,7 @@ discover_markets { "chain": "arbitrum", "version": "v3" }
 | **V4** | BNB | V4 pools, swaps, fee tiers, prices | 1.7M | `EAq1nJKgjnuKH6Gj4RFjCW7LcL7E2uipbncdwV7TTWkX` |
 | **V4** | Ethereum | V4 pools, swaps, fee tiers, prices | 233K | `AdA6Ax3jtct69NnXfxNjWtPTe9gMtSEZx2tTQcT4VHu` |
 | **V4** | Arbitrum | V4 pools, swaps, fee tiers, prices | — | `D1VHPU6cXXSC8eaApWCjCnPcTZQFSYCpGoDAvt4ogDWh` |
-| **V4** | Optimism | V4 pools, swaps, fee tiers, prices | — | `J9QbGgsAJpYFX6tY5y1hy5JkcVUda1kTS2ENGUBqMEY8` |
+| **V4** | Optimism | V4 pools, swaps, fee tiers, prices | — | `3Tn7Y1NJAr4ySKm7KFu1dwvH2WM3mHJnXzXAxQsdBDvW` |
 | **V3** | Ethereum | Concentrated-liquidity pools, fee tiers, swaps, positions, prices | 467K | `5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV` |
 | **V3** | Arbitrum | V3 pools, fee tiers, swaps, prices | 854K | `FbCGRftH4a3yZugY7TnbYgPJVEv2LvMT6oF1fxPe9aJM` |
 | **V3** | Base | V3 pools, fee tiers, swaps, prices — *native-pricing schema* (`nativePriceUSD`/`derivedNative`) | 536K | `HMuAwufqZ1YCRmzL2SfHTVkzZovC9VL2UAKhjvRqKiR1` |

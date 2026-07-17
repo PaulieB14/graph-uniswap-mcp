@@ -180,8 +180,20 @@ export async function getTokenPrice(args: { token: string; chain: string; versio
       resolveToken(m.subgraphId, p.tokenDerivedField, args.token),
     ]);
     if (!tok) throw new Error(`Token "${args.token}" not found on Uniswap ${m.version} ${chain}.`);
-    const derived = num(tok[p.tokenDerivedField]);
-    const priceUsd = nativePrice != null ? derived * nativePrice : null;
+    const derivedRaw = tok[p.tokenDerivedField];
+    const derived = num(derivedRaw);
+    // derivedETH/derivedNative == 0 means the subgraph has NO priced-pool path to
+    // the native asset for this token — it's present but UNPRICEABLE here (e.g. a
+    // new vault stablecoin with no whitelisted pool). Never report a misleading
+    // $0: throw so an unpinned call falls back to a version that CAN price it, and
+    // a pinned call gets a clear error. (A genuinely cheap token has a small
+    // positive derived value, not exactly 0, so this doesn't mislabel micro-caps.)
+    if (nativePrice == null || !(derived > 0)) {
+      throw new Error(
+        `Token "${args.token}"${tok.symbol ? ` (${tok.symbol})` : ""} exists on Uniswap ${m.version} ${chain} but has no priced pool path to the native asset there (${p.tokenDerivedField}=${derivedRaw ?? "null"}), so a USD price can't be derived. Try another version/chain, or use find_pool to inspect its pools directly.`,
+      );
+    }
+    const priceUsd = derived * nativePrice;
     return {
       market: { version: m.version, chain, network: m.network, subgraph_id: m.subgraphId },
       token: { address: tok.id, symbol: tok.symbol, name: tok.name, decimals: num(tok.decimals) },

@@ -57,7 +57,7 @@ export const MARKETS: Market[] = [
   { version: "v4", chain: "bsc", subgraphId: "EAq1nJKgjnuKH6Gj4RFjCW7LcL7E2uipbncdwV7TTWkX", network: "bsc", approxQueriesPerDay: 1_664_000 },
   { version: "v4", chain: "ethereum", subgraphId: "AdA6Ax3jtct69NnXfxNjWtPTe9gMtSEZx2tTQcT4VHu", network: "mainnet", approxQueriesPerDay: 233_000 },
   { version: "v4", chain: "arbitrum", subgraphId: "D1VHPU6cXXSC8eaApWCjCnPcTZQFSYCpGoDAvt4ogDWh", network: "arbitrum-one", note: "recently synced" },
-  { version: "v4", chain: "optimism", subgraphId: "J9QbGgsAJpYFX6tY5y1hy5JkcVUda1kTS2ENGUBqMEY8", network: "optimism" },
+  { version: "v4", chain: "optimism", subgraphId: "3Tn7Y1NJAr4ySKm7KFu1dwvH2WM3mHJnXzXAxQsdBDvW", network: "optimism", note: "full-analytics deployment — the similarly-named 'Uniswap V4 Optimism' subgraph J9QbGg… is a bare PoolManager event indexer with no prices/volume, do not use it" },
 ];
 
 /** Accept common chain aliases so agents can be sloppy. */
