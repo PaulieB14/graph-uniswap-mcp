@@ -28,6 +28,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Test (offline smoke — no secret/network; blocks a broken publish)
+        run: node test/smoke.mjs
+
       - name: Publish if the version is new
         # Skips cleanly when NPM_TOKEN isn't configured, so the workflow never
         # fails just because the secret is missing. Add the NPM_TOKEN repo secret

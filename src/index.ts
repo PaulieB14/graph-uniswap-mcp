@@ -13,7 +13,7 @@ import {
   poolInfo, recentSwaps, rawQuery,
 } from "./tools.js";
 
-const server = new McpServer({ name: "graph-uniswap-mcp", version: "0.2.2" });
+const server = new McpServer({ name: "graph-uniswap-mcp", version: "0.2.3" });
 
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 const wrap = (fn: (a: any) => Promise<unknown>) => async (a: any) => {
@@ -82,7 +82,7 @@ server.tool(
 
 server.tool(
   "raw_query",
-  "Escape hatch: run an arbitrary GraphQL query against the resolved Uniswap subgraph for a (chain, version). Use list_markets to see schemas; V2 uses `pairs`, V3/V4 use `pools`.",
+  "Escape hatch: run an arbitrary GraphQL query against the resolved Uniswap subgraph for a (chain, version). V2 exposes `pairs`, `swaps`, `tokens`; V3/V4 expose `pools`, `swaps`, `tokens`. Run a standard `{ __schema { types { name } } }` introspection query first if you need exact entity/field names.",
   { chain, version, query: z.string().describe("GraphQL query string"), variables: z.record(z.string(), z.unknown()).optional() },
   wrap((a) => rawQuery(a)),
 );

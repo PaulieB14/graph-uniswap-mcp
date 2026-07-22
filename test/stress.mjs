@@ -309,7 +309,7 @@ async function main() {
   const nUp = R.filter((r) => r.status === "UPSTREAM").length;
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify({ pass, fail: fail.length, upstream: nUp, total: R.length, failures: fail, results: R }, null, 2));
-    return;
+    process.exit(fail.length ? 1 : 0);
   }
   console.log(`\n${"═".repeat(64)}\n  graph-uniswap-mcp STRESS TEST\n${"═".repeat(64)}`);
   const byCat = {};
@@ -330,5 +330,6 @@ async function main() {
   if (fail.length) { console.log(`  ✗ ${fail.length} REAL FAILURES:`); for (const f of fail) console.log(`      - [${f.cat}] ${f.name}  ${f.detail}`); }
   else console.log(`  ✓ ZERO real failures.`);
   console.log(`${"═".repeat(64)}\n`);
+  process.exit(fail.length ? 1 : 0);
 }
 main().catch((e) => { console.error("STRESS HARNESS ERROR:", e); process.exit(1); });

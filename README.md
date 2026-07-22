@@ -30,12 +30,14 @@ Every tool takes `chain` and an optional `version` (`v2`/`v3`/`v4`). Omit `versi
 
 ## Setup
 
-```bash
-npm install
-npm run build
-```
+**1. Get a free Graph API key** at <https://thegraph.com/studio> (Billing → API Keys — first 100k queries/month are free).
 
-Get a free Graph gateway API key at <https://thegraph.com/studio> (Billing → API Keys — first 100k queries/month are free), then add the server to your MCP client:
+**2. Add the server to your MCP client.** No install needed — `npx` fetches the published build.
+
+<details open>
+<summary><b>Claude Desktop</b></summary>
+
+Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json` · Windows: `%APPDATA%\Claude\claude_desktop_config.json`):
 
 ```json
 {
@@ -48,8 +50,35 @@ Get a free Graph gateway API key at <https://thegraph.com/studio> (Billing → A
   }
 }
 ```
+</details>
 
-Or run locally: `GRAPH_API_KEY=... npm start`.
+<details>
+<summary><b>Claude Code</b></summary>
+
+```bash
+claude mcp add-json graph-uniswap '{"command":"npx","args":["-y","graph-uniswap-mcp"],"env":{"GRAPH_API_KEY":"your_key_here"}}'
+```
+</details>
+
+<details>
+<summary><b>Cursor</b></summary>
+
+Add the same `mcpServers` block to `.cursor/mcp.json` (per-project) or `~/.cursor/mcp.json` (global).
+</details>
+
+> Prefer keyless, pay-per-query access (no API key, gasless USDC on Base)? See **[PayQL](https://github.com/PaulieB14/payql)** — discover + pay-per-query The Graph over x402.
+
+<details>
+<summary>Run from source / contributing</summary>
+
+```bash
+git clone https://github.com/PaulieB14/graph-uniswap-mcp && cd graph-uniswap-mcp
+npm install && npm run build
+GRAPH_API_KEY=... npm start   # run the server
+npm test                      # offline smoke — no key needed
+npm run test:live             # full stress suite (needs GRAPH_API_KEY + network)
+```
+</details>
 
 ## Example calls
 

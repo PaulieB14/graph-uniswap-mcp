@@ -68,11 +68,15 @@ async function resolveToken(subgraphId: string, derivedField: string, token: str
     );
     return d.tokens?.[0] ?? null;
   }
-  // Symbol: multiple tokens can share one — take the most-transacted (least spammy).
+  // Symbol: on-chain symbols are case-sensitive and the majors are uppercase
+  // (USDC/WETH/DAI/WBTC), but agents routinely lowercase — so match the raw
+  // form AND its uppercase in one round-trip. Multiple tokens can share a
+  // symbol; take the most-transacted (least spammy).
+  const forms = Array.from(new Set([t, t.toUpperCase()]));
   const d = await gqlQuery<{ tokens: any[] }>(
     subgraphId,
-    `query($s:String!){ tokens(first:10, where:{symbol:$s}, orderBy:txCount, orderDirection:desc){ id symbol name decimals txCount ${derivedField} } }`,
-    { s: t },
+    `query($s:[String!]){ tokens(first:10, where:{symbol_in:$s}, orderBy:txCount, orderDirection:desc){ id symbol name decimals txCount ${derivedField} } }`,
+    { s: forms },
   );
   return d.tokens?.[0] ?? null;
 }
