@@ -6,7 +6,7 @@
  *    pricing — a single fake pool can report trillions), and flags TVL as such.
  */
 import {
-  Chain, Version, Market, resolveMarket, resolveMarketCandidates,
+  Chain, Version, Market, resolveMarket, resolveMarketCandidates, listMarketOverrides, clearMarketOverride,
   normalizeChain, normalizeVersion, MARKETS, SUPPORTED_CHAINS, setMarketOverride,
 } from "./markets.js";
 import { gqlQuery, getProfile, getNativePrice, num } from "./graph.js";
@@ -183,15 +183,67 @@ export async function discoverMarkets(args: { chain?: string; version?: string; 
     /* network scan is best-effort; recommended[] stands on its own */
   }
 
+  // HEALTH-CHECK BEFORE INSTALLING.
+  //
+  // live[0] is the top result of a substring NAME match sorted by GRT signal —
+  // a 1-GRT fork with a plausible name outranks nothing and wins. Applying it
+  // blind poisoned the session for the rest of its life: verified 2026-08-19,
+  // apply:true on ethereum/v3 installed an unindexed deployment and every
+  // subsequent call timed out after 15s, with list_markets still showing the
+  // canonical id so the cause was invisible. A discovery feature must never be
+  // able to leave the server worse than it found it.
   let applied: string | null = null;
-  if (args.apply && chain && version && live[0]) {
-    setMarketOverride(version, chain, live[0].subgraph_id);
-    applied = live[0].subgraph_id;
+  let apply_skipped: string | null = null;
+  if (args.apply && chain && version) {
+    if (!live[0]) {
+      apply_skipped = "No live candidate was found to apply.";
+    } else {
+      const candidate = live[0].subgraph_id;
+      const previous = resolveMarket(chain, version).subgraphId;
+      // Only HEAL something that is actually broken. The seeded map is verified
+      // and canonical; live[0] is whatever scored highest on GRT signal after a
+      // substring name match, which is not a reason to displace Uniswap Labs'
+      // own deployment. Replacing a working market with a stranger is how
+      // apply:true poisoned sessions. If the incumbent answers, keep it and just
+      // report the candidate.
+      let incumbentHealthy = false;
+      try {
+        const cur = await gqlQuery<{ _meta: { block: { number: number } } }>(
+          previous, "{ _meta { block { number } } }", {}, { maxAttempts: 1, timeoutMs: 8000 },
+        );
+        incumbentHealthy = Boolean(cur?._meta?.block?.number);
+      } catch { /* unhealthy — a replacement is warranted */ }
+
+      if (candidate === previous) {
+        apply_skipped = `Top candidate is already the active subgraph (${candidate}).`;
+      } else if (incumbentHealthy) {
+        apply_skipped =
+          `Kept ${previous}: it is healthy, so there is nothing to heal. `
+          + `Top signal candidate ${candidate} is listed in live_signal_candidates if you want it — `
+          + `discover_markets only replaces a market that is failing.`;
+      } else {
+        try {
+          // Cheapest possible proof of life: does it answer, and how far behind is it?
+          const probe = await gqlQuery<{ _meta: { block: { number: number } } }>(
+            candidate, "{ _meta { block { number } } }", {}, { maxAttempts: 1, timeoutMs: 8000 },
+          );
+          if (!probe?._meta?.block?.number) throw new Error("no _meta block");
+          setMarketOverride(version, chain, candidate);
+          applied = candidate;
+        } catch (e) {
+          apply_skipped =
+            `Refused to apply ${candidate}: it did not answer a _meta probe (${e instanceof Error ? e.message.slice(0, 120) : String(e)}). `
+            + `Keeping ${previous}.`;
+        }
+      }
+    }
   }
   return {
     recommended,
     live_signal_candidates: live,
     applied_override: applied,
+    apply_skipped,
+    active_overrides: listMarketOverrides(),
     note: "recommended[] are the verified subgraphs this server uses (IDs auto-follow the latest published version). live_signal_candidates is a best-effort network-subgraph scan and may be partial.",
   };
 }

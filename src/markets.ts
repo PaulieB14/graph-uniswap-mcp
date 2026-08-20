@@ -32,6 +32,22 @@ export interface Market {
   network: string;
   /** rough daily query volume (from the operator dashboard) — popularity signal only */
   approxQueriesPerDay?: number;
+  /**
+   * Never serve this market: its indexers are down, so every query errors.
+   * Kept in the map (rather than deleted) so a caller who pins it gets a real
+   * explanation instead of "no subgraph mapped for this chain".
+   */
+  unavailable?: string;
+  /**
+   * Servable, but must not be chosen when the caller did NOT pin a version.
+   * Default selection ranks by query traffic, and traffic is a poor proxy for
+   * usefulness — Uniswap V4 on Base is the single highest-traffic Uniswap
+   * subgraph on the network, yet its top pools by volume are hook pools with
+   * zero in-range liquidity reporting billions in fabricated volume. Picking it
+   * by default made the most natural call (`chain: "base"`, no version) return
+   * junk. Pinning `version: "v4"` still works and is honoured.
+   */
+  notDefault?: string;
   note?: string;
 }
 
@@ -53,9 +69,9 @@ export const MARKETS: Market[] = [
   { version: "v3", chain: "bsc", subgraphId: "7XgdLW3bts4HktCYsu9dy8bEnuiNeZuftcuK3Aj4JXYV", network: "bsc", approxQueriesPerDay: 1_112_000 },
 
   // ── V4 (PoolManager + hooks schema) ──────────────────────────────────────
-  { version: "v4", chain: "base", subgraphId: "Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj", network: "base", approxQueriesPerDay: 8_644_000, note: "highest-volume Uniswap subgraph on the whole network" },
+  { version: "v4", chain: "base", subgraphId: "Gqm2b5J85n1bhCyDMpGbtbVn4935EvvdyHdHrx3dibyj", network: "base", approxQueriesPerDay: 8_644_000, note: "highest-query-volume Uniswap subgraph on the whole network", notDefault: "Top pools by volume here are hook pools with zero in-range liquidity reporting billions in fabricated volumeUSD (verified 2026-08-19). Servable when pinned with version:\'v4\', but not chosen by default." },
   { version: "v4", chain: "bsc", subgraphId: "EAq1nJKgjnuKH6Gj4RFjCW7LcL7E2uipbncdwV7TTWkX", network: "bsc", approxQueriesPerDay: 1_664_000 },
-  { version: "v4", chain: "ethereum", subgraphId: "AdA6Ax3jtct69NnXfxNjWtPTe9gMtSEZx2tTQcT4VHu", network: "mainnet", approxQueriesPerDay: 233_000 },
+  { version: "v4", chain: "ethereum", subgraphId: "AdA6Ax3jtct69NnXfxNjWtPTe9gMtSEZx2tTQcT4VHu", network: "mainnet", approxQueriesPerDay: 233_000, unavailable: "The routed indexers return BadResponse(400) for every query (verified 2026-08-19). Use discover_markets to look for a replacement deployment." },
   { version: "v4", chain: "arbitrum", subgraphId: "D1VHPU6cXXSC8eaApWCjCnPcTZQFSYCpGoDAvt4ogDWh", network: "arbitrum-one", note: "recently synced" },
   { version: "v4", chain: "optimism", subgraphId: "3Tn7Y1NJAr4ySKm7KFu1dwvH2WM3mHJnXzXAxQsdBDvW", network: "optimism", note: "full-analytics deployment — the similarly-named 'Uniswap V4 Optimism' subgraph J9QbGg… is a bare PoolManager event indexer with no prices/volume, do not use it" },
 ];
@@ -90,6 +106,19 @@ export function setMarketOverride(v: Version, c: Chain, subgraphId: string) {
   OVERRIDES.set(key(v, c), subgraphId);
 }
 
+/** Undo a runtime override, restoring the seeded subgraph for this market. */
+export function clearMarketOverride(v: Version, c: Chain): boolean {
+  return OVERRIDES.delete(key(v, c));
+}
+
+/** Currently-active runtime overrides, for reporting. */
+export function listMarketOverrides(): Array<{ version: string; chain: string; subgraphId: string }> {
+  return [...OVERRIDES.entries()].map(([k, subgraphId]) => {
+    const [version, chain] = k.split(":");
+    return { version, chain, subgraphId };
+  });
+}
+
 /**
  * Ordered candidate markets for a chain, highest-volume version first (with any
  * runtime override applied). If `version` is given, only that version. The tools
@@ -98,7 +127,18 @@ export function setMarketOverride(v: Version, c: Chain, subgraphId: string) {
  * path. Throws if the chain (or chain+version) has no mapped subgraph.
  */
 export function resolveMarketCandidates(chain: Chain, version?: Version): Market[] {
-  const candidates = MARKETS.filter((m) => m.chain === chain && (!version || m.version === version));
+  const all = MARKETS.filter((m) => m.chain === chain && (!version || m.version === version));
+  // A pinned version is honoured even if it is flagged notDefault — the caller
+  // asked for it explicitly. `unavailable` is refused either way: serving it
+  // guarantees an error, and silently falling back would answer for a different
+  // version than the one requested.
+  const dead = all.filter((m) => m.unavailable);
+  const candidates = all.filter((m) => !m.unavailable && (version ? true : !m.notDefault));
+  if (candidates.length === 0 && dead.length > 0) {
+    throw new Error(
+      `Uniswap ${dead[0].version.toUpperCase()} on ${chain} is currently unusable: ${dead[0].unavailable}`,
+    );
+  }
   if (candidates.length === 0) {
     const have = MARKETS.filter((m) => m.chain === chain).map((m) => m.version);
     throw new Error(
@@ -107,8 +147,20 @@ export function resolveMarketCandidates(chain: Chain, version?: Version): Market
         : `No Uniswap subgraph is mapped for chain "${chain}".`,
     );
   }
+  // DEFAULT ORDER IS BY VERSION, NOT BY TRAFFIC.
+  //
+  // Ranking by approxQueriesPerDay picked the most QUERIED market, which is not
+  // the most USEFUL one. It sent `chain:"base"` to V4 (highest-traffic Uniswap
+  // subgraph on the network, whose top pools are zero-liquidity hook pools), and
+  // once V4 was excluded it sent Base to V2 (more traffic than V3, but thinner
+  // liquidity and a Pair schema with no fee tier). V3 is the deepest and most
+  // schema-stable deployment on every chain that has one, so it leads; traffic
+  // only breaks ties within a version. A pinned version bypasses all of this.
+  const VERSION_PREFERENCE: Record<Version, number> = { v3: 0, v4: 1, v2: 2 };
   return candidates
-    .sort((a, b) => (b.approxQueriesPerDay ?? 0) - (a.approxQueriesPerDay ?? 0))
+    .sort((a, b) =>
+      VERSION_PREFERENCE[a.version] - VERSION_PREFERENCE[b.version]
+      || (b.approxQueriesPerDay ?? 0) - (a.approxQueriesPerDay ?? 0))
     .map((m) => {
       const override = OVERRIDES.get(key(m.version, chain));
       return override ? { ...m, subgraphId: override } : m;

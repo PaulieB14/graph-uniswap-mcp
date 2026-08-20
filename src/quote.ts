@@ -119,12 +119,29 @@ async function quoteOnMarket(market: { subgraphId: string; version: Version; cha
 
   const feePips = Number(p.feeTier);
   const cur = Number(p.tick);
-  const t = await gqlQuery<{ ticks: Array<{ tickIdx: string; liquidityNet: string }> }>(
-    market.subgraphId,
-    `{ ticks(first: 1000, orderBy: tickIdx,
-         where: { poolAddress: "${id}", tickIdx_gte: ${cur - TICK_WINDOW}, tickIdx_lte: ${cur + TICK_WINDOW} })
-       { tickIdx liquidityNet } }`,
-  );
+  // Not every deployment exposes `ticks` — Uniswap V3 on Base does not
+  // ("Type `Query` has no field `ticks`"). Without the liquidity curve there is
+  // no honest quote, so REFUSE here. Letting this throw would be worse than
+  // wrong: withMarket falls back to the next version on an exception, so an
+  // unpinned caller asking about a V3 pool could silently receive a V2 answer.
+  let t: { ticks: Array<{ tickIdx: string; liquidityNet: string }> };
+  try {
+    t = await gqlQuery<{ ticks: Array<{ tickIdx: string; liquidityNet: string }> }>(
+      market.subgraphId,
+      `{ ticks(first: 1000, orderBy: tickIdx,
+           where: { poolAddress: "${id}", tickIdx_gte: ${cur - TICK_WINDOW}, tickIdx_lte: ${cur + TICK_WINDOW} })
+         { tickIdx liquidityNet } }`,
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const noEntity = /no field `?ticks`?/i.test(msg);
+    return {
+      quotable: false, version: market.version, chain: market.chain, pool: p.id,
+      reason: noEntity
+        ? `The ${market.version.toUpperCase()} subgraph for ${market.chain} does not expose a \`ticks\` entity, so the liquidity curve is unavailable and no trustworthy quote can be computed. Pool facts are still available via pool_info.`
+        : `Could not read tick liquidity for this pool: ${msg.slice(0, 160)}`,
+    };
+  }
   const ticks: TickData[] = (t.ticks || [])
     .map((x) => ({ i: Number(x.tickIdx), net: x.liquidityNet }))
     .filter((x) => Number.isFinite(x.i));

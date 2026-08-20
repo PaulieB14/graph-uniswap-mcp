@@ -1,6 +1,6 @@
 {
   "name": "graph-uniswap-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Uniswap MCP over The Graph \u2014 V2/V3/V4 on 6 chains. Simulates swaps offline with the protocol's own concentrated-liquidity math (wei-exact vs @uniswap/v3-sdk, no RPC, no extra key): amount out, effective price, price impact. Refuses to guess instead of shipping a wrong number.",
   "type": "module",
   "author": "PaulieB14",

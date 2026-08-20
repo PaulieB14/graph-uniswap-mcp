@@ -75,7 +75,7 @@ to "how deep is this pool", and a fabricated scalar is not.
 |---|---|
 | **`quote_swap`** | **Simulate an exact-input swap: amount out, effective price, price impact, ticks crossed** |
 | `list_markets` | Every version×chain and its backing subgraph |
-| `discover_markets` | Re-resolve live subgraphs from The Graph's network subgraph |
+| `discover_markets` | Re-resolve live subgraphs; with `apply:true`, replace a market **only if it is broken** |
 | `get_token_price` | USD price of a token (symbol or address) |
 | `top_pools` | Top pools on a chain, ranked by volume |
 | `find_pool` | Pool(s) for a token pair, either order |
@@ -83,13 +83,39 @@ to "how deep is this pool", and a fabricated scalar is not.
 | `recent_swaps` | Newest swaps, optionally scoped to a pool |
 | `raw_query` | Arbitrary GraphQL against the resolved subgraph |
 
-All tools except `list_markets` take `chain` plus an optional `version` (`v2`/`v3`/`v4`). Omit
-`version` and it uses the highest-query-volume version on that chain. Chain aliases (`eth`, `arb`,
-`matic`, `bnb`, …) are accepted.
+All tools except `list_markets` take `chain` plus an optional `version` (`v2`/`v3`/`v4`). Chain
+aliases (`eth`, `arb`, `matic`, `bnb`, …) are accepted.
+
+### Coverage, precisely
+
+| Chain | V2 | V3 | V4 |
+|---|---|---|---|
+| Ethereum | ✅ | ✅ **default** | ⛔ indexers returning 400 |
+| Arbitrum | — | ✅ **default** | ✅ pin `v4` |
+| Base | ✅ | ✅ **default** | ⚠️ pin `v4` — see below |
+| Polygon | — | ✅ **default** | — |
+| Optimism | — | ✅ **default** | ✅ pin `v4` |
+| BSC | — | ✅ **default** | ✅ pin `v4` |
+
+Omit `version` and you get **V3** wherever it exists. Earlier versions ranked by query traffic,
+which picked the *most queried* market rather than the most useful one: `chain:"base"` landed on
+V4, whose top pools by volume are zero-liquidity hook pools reporting billions in fabricated
+volume. Pinning a version always overrides this.
+
+`⛔` markets refuse with an explanation rather than erroring obscurely. `⚠️` Base V4 is servable
+when pinned, but is not chosen for you.
 
 Ranking is always by `volumeUSD`, never TVL — a single spam-token pool can claim trillions in fake
 liquidity, so a TVL sort returns junk at the top. This holds even on subgraphs whose per-pool TVL
 is accurate.
+
+### discover_markets only heals what is broken
+
+`apply: true` used to install the top GRT-signal name match unconditionally, which could displace
+Uniswap Labs' canonical deployment with a stranger and break the market for the rest of the
+session — invisibly, since `list_markets` still showed the old id. It now probes the incumbent
+first, keeps it if healthy, and probes any replacement before installing it. Candidates are always
+listed in `live_signal_candidates` whether or not anything is applied.
 
 ## Setup
 
