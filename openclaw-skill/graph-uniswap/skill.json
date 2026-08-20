@@ -1,6 +1,6 @@
 {
   "name": "graph-uniswap",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Simulate a Uniswap swap before making it — amount out, effective price and price impact, computed offline from The Graph with the protocol's own concentrated-liquidity math (wei-exact vs @uniswap/v3-sdk, no RPC). Plus pools, prices, pairs and swap flow across Uniswap V2/V3/V4 on Ethereum, Arbitrum, Base, Polygon, Optimism and BSC.",
   "author": "paulieb14",
   "license": "MIT",
