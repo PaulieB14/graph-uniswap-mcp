@@ -1,7 +1,7 @@
 {
   "name": "graph-uniswap-mcp",
-  "version": "0.2.3",
-  "description": "Graph Uniswap MCP — Uniswap V2/V3/V4 across Ethereum, Arbitrum, Base, Polygon, Optimism & BSC, powered by The Graph. Self-healing subgraph resolution, schema-adaptive, ranks by volume not (gamed) TVL. Prices, pools, swaps, and a raw GraphQL escape hatch for any AI agent.",
+  "version": "0.3.0",
+  "description": "Uniswap MCP over The Graph \u2014 V2/V3/V4 on 6 chains. Simulates swaps offline with the protocol's own concentrated-liquidity math (wei-exact vs @uniswap/v3-sdk, no RPC, no extra key): amount out, effective price, price impact. Refuses to guess instead of shipping a wrong number.",
   "type": "module",
   "author": "PaulieB14",
   "repository": {
@@ -30,23 +30,32 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js",
-    "test": "npm run build && node test/smoke.mjs",
+    "test": "npm run build && node test/smoke.mjs && node test/quote-math.mjs",
     "test:live": "npm run build && node test/stress.mjs",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "prepack": "npm run build"
   },
   "keywords": [
-    "mcp",
-    "model-context-protocol",
-    "uniswap",
-    "uniswap-v4",
-    "uniswap-v3",
-    "thegraph",
-    "subgraph",
+    "agents",
+    "ai",
+    "concentrated-liquidity",
     "defi",
     "dex",
+    "mcp",
+    "model-context-protocol",
     "onchain",
-    "agents",
-    "ai"
+    "price-impact",
+    "quote",
+    "slippage",
+    "subgraph",
+    "swap",
+    "the-graph",
+    "thegraph",
+    "uniswap",
+    "uniswap-v3",
+    "uniswap-v4",
+    "v3",
+    "v4"
   ],
   "license": "MIT",
   "dependencies": {

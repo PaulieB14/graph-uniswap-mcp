@@ -16,7 +16,7 @@ import { join } from "node:path";
 
 const EXPECTED = [
   "list_markets", "discover_markets", "get_token_price", "top_pools",
-  "find_pool", "pool_info", "recent_swaps", "raw_query",
+  "find_pool", "pool_info", "recent_swaps", "quote_swap", "raw_query",
 ];
 
 // Deliberately strip the key so we prove the gate needs no secret/network.

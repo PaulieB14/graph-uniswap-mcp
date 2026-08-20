@@ -12,6 +12,7 @@ import {
   listMarkets, discoverMarkets, getTokenPrice, topPools, findPool,
   poolInfo, recentSwaps, rawQuery,
 } from "./tools.js";
+import { quoteSwap } from "./quote.js";
 
 const server = new McpServer({ name: "graph-uniswap-mcp", version: "0.2.3" });
 
@@ -78,6 +79,18 @@ server.tool(
   "Recent swaps on a chain, newest first — optionally scoped to one pool. Real-time trade flow with USD amounts and the trading wallet.",
   { chain, version, pool: z.string().optional().describe("Pool/pair address to scope to"), first: z.number().int().min(1).max(50).optional() },
   wrap((a) => recentSwaps(a)),
+);
+
+server.tool(
+  "quote_swap",
+  "Pre-trade quote: simulate an exact-input swap against a pool's real liquidity and get amount out, effective price, and price impact — BEFORE trading. Runs Uniswap's own concentrated-liquidity math locally over subgraph pool state and ticks, so it needs no RPC and no extra key. Returns quotable:false with a reason rather than a guess when it cannot be trusted (V4 hook pools, zero liquidity, or a trade larger than the liquidity in view).",
+  {
+    pool: z.string().describe("Pool/pair contract address (0x…) — get one from find_pool or top_pools"),
+    tokenIn: z.string().describe("Which side you are selling: token symbol or 0x address (must be one of the pool's two tokens)"),
+    amountIn: z.number().positive().describe("Amount of tokenIn to sell, in human units (e.g. 1.5 for 1.5 WETH)"),
+    chain, version,
+  },
+  wrap((a) => quoteSwap(a as any)),
 );
 
 server.tool(

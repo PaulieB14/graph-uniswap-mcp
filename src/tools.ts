@@ -14,14 +14,38 @@ import { gqlQuery, getProfile, getNativePrice, num } from "./graph.js";
 const NETWORK_SUBGRAPH = "DZz4kDTdmzWLWsV373w2bSmoar3umKKH9y82SUKr5qmp"; // Graph Network (Arbitrum)
 const ADDR = /^0x[0-9a-fA-F]{40}$/;
 const TVL_NOTE =
-  "TVL/liquidity values from Uniswap subgraphs are unreliable — illiquid spam-token pools inflate them massively. Rank and judge by volumeUSD, not TVL.";
+  "TVL/liquidity is NOT reported for Uniswap V3/V4 native deployments: the subgraph's "
+  + "totalValueLockedUSD accumulates per-event deltas and drifts. Measured 2026-08-19 on the "
+  + "canonical USDC/WETH 0.3% pool, it read 138.9M USDC against 6.1M actually held on chain — "
+  + "22.7x high, on a blue-chip pool, so spam-token pricing does not explain it. A wrong number "
+  + "with a caveat is worse than no number, because agents read fields and not prose. "
+  + "For real depth use quote_swap, which simulates against the actual tick liquidity.";
 
-function pickChain(chain: string): Chain {
+/**
+ * Reject anything that is not a plain hex id before it reaches a GraphQL document.
+ *
+ * Pool ids are interpolated into the query string rather than passed as variables
+ * (graph-node's `where` filters make that awkward), so an unvalidated argument is a
+ * GraphQL INJECTION: a caller passing `x"}){id} evil:swaps(where:{` rewrites the
+ * document. Accepts both widths deliberately — V2/V3 pools are 20-byte addresses
+ * (40 hex), V4 pool ids are 32-byte hashes (64 hex).
+ */
+export function assertHexId(value: string, label = "pool"): string {
+  const v = value.trim().toLowerCase();
+  if (!/^0x([0-9a-f]{40}|[0-9a-f]{64})$/.test(v)) {
+    throw new Error(
+      `Invalid ${label} "${value}". Expected a 0x-prefixed hex id: 40 hex chars for a V2/V3 pool address, or 64 for a V4 pool id.`,
+    );
+  }
+  return v;
+}
+
+export function pickChain(chain: string): Chain {
   const c = normalizeChain(chain);
   if (!c) throw new Error(`Unknown chain "${chain}". Supported: ${SUPPORTED_CHAINS.join(", ")}.`);
   return c;
 }
-function pickVersion(version?: string): Version | undefined {
+export function pickVersion(version?: string): Version | undefined {
   if (version == null || version === "") return undefined;
   const v = normalizeVersion(version);
   if (!v) throw new Error(`Unknown version "${version}". Use v2, v3, or v4.`);
@@ -37,7 +61,7 @@ function pickVersion(version?: string): Version | undefined {
  * Empty-but-valid results (a legit "no pool") do NOT trigger fallback; only
  * servability failures do. `served` reports which version actually answered.
  */
-async function withMarket<T>(
+export async function withMarket<T>(
   chain: Chain,
   version: Version | undefined,
   fn: (m: Market) => Promise<T>,
@@ -244,7 +268,7 @@ export async function topPools(args: { chain: string; version?: string; first?: 
       pools: (d.pools ?? []).map((x) => ({
         pool: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`,
         fee_tier: num(x.feeTier), volume_usd: num(x.volumeUSD), fees_usd: num(x.feesUSD),
-        tvl_usd: num(x.totalValueLockedUSD), tx_count: num(x.txCount),
+        tvl_usd: null, tx_count: num(x.txCount),
       })),
       note: TVL_NOTE,
     };
@@ -280,7 +304,7 @@ export async function findPool(args: { tokenA: string; tokenB: string; chain: st
       pools: rows.map((x: any) => ({
         id: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`,
         ...(p.style === "pool" ? { fee_tier: num(x.feeTier) } : {}),
-        volume_usd: num(x.volumeUSD), tvl_usd: num(x[tvl]), tx_count: num(x.txCount),
+        volume_usd: num(x.volumeUSD), tvl_usd: p.style === "pair" ? num(x[tvl]) : null, tx_count: num(x.txCount),
       })),
       note: rows.length ? TVL_NOTE : "No pool found for this pair on this version/chain — try another version (v2/v3/v4).",
     };
@@ -323,8 +347,8 @@ export async function poolInfo(args: { pool: string; chain: string; version?: st
       market: { version: m.version, chain, subgraph_id: m.subgraphId },
       pool: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`, fee_tier: num(x.feeTier),
       token0Price: num(x.token0Price), token1Price: num(x.token1Price),
-      volume_usd: num(x.volumeUSD), fees_usd: num(x.feesUSD), tvl_usd: num(x.totalValueLockedUSD),
-      tvl_token0: num(x.totalValueLockedToken0), tvl_token1: num(x.totalValueLockedToken1),
+      volume_usd: num(x.volumeUSD), fees_usd: num(x.feesUSD), tvl_usd: null,
+      tvl_token0: null, tvl_token1: null,
       tx_count: num(x.txCount), note: TVL_NOTE,
     };
   });
@@ -338,7 +362,7 @@ export async function recentSwaps(args: { chain: string; version?: string; pool?
   return withMarket(chain, version, async (m) => {
     const p = await getProfile(m.subgraphId);
     if (p.style === "pair") {
-      const where = poolId ? `where:{pair:"${poolId}"}, ` : "";
+      const where = poolId ? `where:{pair:"${assertHexId(poolId)}"}, ` : "";
       const d = await gqlQuery<{ swaps: any[] }>(
         m.subgraphId,
         `query($n:Int!){ swaps(first:$n, ${where}orderBy:timestamp, orderDirection:desc){
@@ -356,7 +380,7 @@ export async function recentSwaps(args: { chain: string; version?: string; pool?
         })),
       };
     }
-    const where = poolId ? `where:{pool:"${poolId}"}, ` : "";
+    const where = poolId ? `where:{pool:"${assertHexId(poolId)}"}, ` : "";
     const d = await gqlQuery<{ swaps: any[] }>(
       m.subgraphId,
       `query($n:Int!){ swaps(first:$n, ${where}orderBy:timestamp, orderDirection:desc){
