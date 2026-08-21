@@ -1,7 +1,7 @@
 ---
 name: graph-uniswap
 description: "Simulate a Uniswap swap before making it — amount out, effective price, price impact — computed offline from The Graph with the protocol's own concentrated-liquidity math. Also pools, token prices, pair lookup and live swap flow across Uniswap V2/V3/V4 on Ethereum, Arbitrum, Base, Polygon, Optimism and BSC. Trigger keywords: uniswap, swap, quote, price impact, slippage, how much would I get, pool, liquidity, fee tier, LP, DEX, token price, V3, V4."
-version: 0.3.1
+version: 0.3.2
 homepage: https://github.com/PaulieB14/graph-uniswap-mcp
 metadata:
   clawdbot:
