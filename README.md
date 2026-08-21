@@ -49,7 +49,7 @@ a reason instead of a figure when it cannot be trusted:
 | **V4 pool with a hook** | Hooks can override the fee and the pricing curve, so simulating the vanilla curve would be wrong. On Base the top V4 pools by volume are hook-driven with zero in-range liquidity — this is the common case, not an edge case. |
 | **Trade larger than the liquidity in view** | The tick window is ±20,000 ticks. A trade that consumes all of it gets a `lower_bound_amount_out`, explicitly not a quote. |
 | **Zero in-range liquidity** | Nothing to swap against at the current tick. |
-| **No `ticks` entity on the deployment** | The liquidity curve is unknown. V3 on Base is affected; V3 elsewhere and V4 on Ethereum are fine. |
+| **No `ticks` entity on the deployment** | The liquidity curve is unknown. Every mapped market now exposes ticks except V4 on Base. |
 
 ## TVL is reported as `null`, deliberately
 
@@ -88,14 +88,14 @@ aliases (`eth`, `arb`, `matic`, `bnb`, …) are accepted.
 
 ### Coverage, precisely
 
-| Chain | V2 | V3 | V4 |
-|---|---|---|---|
-| Ethereum | ✅ | ✅ **default** | ✅ pin `v4` — quotable |
-| Arbitrum | — | ✅ **default** | ✅ pin `v4` |
-| Base | ✅ | ✅ **default** | ⚠️ pin `v4` — see below |
-| Polygon | — | ✅ **default** | — |
-| Optimism | — | ✅ **default** | ✅ pin `v4` |
-| BSC | — | ✅ **default** | ✅ pin `v4` |
+| Chain | V2 | V3 | V4 | `quote_swap` |
+|---|---|---|---|---|
+| Ethereum | ✅ | ✅ **default** | ✅ pin `v4` | V3 + V4 |
+| Arbitrum | — | ✅ **default** | ✅ pin `v4` | V3 |
+| Base | ✅ | ✅ **default** | ⚠️ pin `v4` | V3 |
+| Polygon | — | ✅ **default** | ✅ pin `v4` | V3 + V4 |
+| Optimism | — | ✅ **default** | ✅ pin `v4` | V3 |
+| BSC | — | ✅ **default** | ✅ pin `v4` | V3 |
 
 Omit `version` and you get **V3** wherever it exists. Earlier versions ranked by query traffic,
 which picked the *most queried* market rather than the most useful one: `chain:"base"` landed on

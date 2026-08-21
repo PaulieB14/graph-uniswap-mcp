@@ -63,7 +63,7 @@ export const MARKETS: Market[] = [
   // ── V3 (Pool-based schema) ───────────────────────────────────────────────
   { version: "v3", chain: "ethereum", subgraphId: "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV", network: "mainnet", approxQueriesPerDay: 467_000, note: "canonical Uniswap Labs V3" },
   { version: "v3", chain: "arbitrum", subgraphId: "FbCGRftH4a3yZugY7TnbYgPJVEv2LvMT6oF1fxPe9aJM", network: "arbitrum-one", approxQueriesPerDay: 854_000 },
-  { version: "v3", chain: "base", subgraphId: "HMuAwufqZ1YCRmzL2SfHTVkzZovC9VL2UAKhjvRqKiR1", network: "base", approxQueriesPerDay: 536_000, note: "uses derivedNative/nativePriceUSD pricing fields" },
+  { version: "v3", chain: "base", subgraphId: "96eJ9Go8gFjySRGnndG7EYxThaiwVDV8BYPp1TMDcoYh", network: "base", approxQueriesPerDay: 536_000, note: "Replaced HMuAwufq… on 2026-08-20: that deployment exposes NO `ticks` entity, so quote_swap could not work on Base at all, and it intermittently timed out. This one indexes at 0 lag, serves the same top pools (WETH/USDC $49.8B), and exposes ticks — so Base is now quotable. Uses derivedNative/nativePriceUSD pricing fields." },
   { version: "v3", chain: "polygon", subgraphId: "EsLGwxyeMMeJuhqWvuLmJEiDKXJ4Z6YsoJreUnyeozco", network: "matic", approxQueriesPerDay: 539_000 },
   { version: "v3", chain: "optimism", subgraphId: "Cghf4LfVqPiFw6fp6Y5X5Ubc8UpmUhSfJL82zwiBFLaj", network: "optimism", approxQueriesPerDay: 307_000, note: "canonical native deployment; indexers occasionally lag — discover_markets will fall back if unservable" },
   { version: "v3", chain: "bsc", subgraphId: "7XgdLW3bts4HktCYsu9dy8bEnuiNeZuftcuK3Aj4JXYV", network: "bsc", approxQueriesPerDay: 1_112_000 },
@@ -73,6 +73,7 @@ export const MARKETS: Market[] = [
   { version: "v4", chain: "bsc", subgraphId: "EAq1nJKgjnuKH6Gj4RFjCW7LcL7E2uipbncdwV7TTWkX", network: "bsc", approxQueriesPerDay: 1_664_000 },
   { version: "v4", chain: "ethereum", subgraphId: "8B2wKxnkciCTc5HSgsAojF6vhKn6wxQ1nVecYzMge1hA", network: "mainnet", note: "uniswap-v4-ethereum. Replaced AdA6Ax… on 2026-08-20: that deployment's indexers returned BadResponse on every data query for days while only _meta answered. This one indexes at 0 lag, exposes `ticks`, and its top pools by volume are real hookless pairs (USDC/USDT, WBTC/cbBTC, ETH/USDC) — so unlike V4 on Base it is genuinely quotable. Uses the V4 field names: fee/tickSpacing/sqrtPriceX96 rather than feeTier/sqrtPrice." },
   { version: "v4", chain: "arbitrum", subgraphId: "D1VHPU6cXXSC8eaApWCjCnPcTZQFSYCpGoDAvt4ogDWh", network: "arbitrum-one", note: "recently synced" },
+  { version: "v4", chain: "polygon", subgraphId: "2CB2uQxcDKWDenagn2z17KQVCtfwSx5eXYuvqTciRTJu", network: "matic", note: "Added 2026-08-20 — V4 IS deployed on Polygon; the map (and the README) previously said otherwise. Real hookless pools with ticks: USDC.e/USDC, USDC/USDT, DAI/USDT." },
   { version: "v4", chain: "optimism", subgraphId: "3Tn7Y1NJAr4ySKm7KFu1dwvH2WM3mHJnXzXAxQsdBDvW", network: "optimism", note: "full-analytics deployment — the similarly-named 'Uniswap V4 Optimism' subgraph J9QbGg… is a bare PoolManager event indexer with no prices/volume, do not use it" },
 ];
 
