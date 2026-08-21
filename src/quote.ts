@@ -13,7 +13,7 @@
  * returns `quotable: false` with a reason instead of a plausible-looking figure.
  */
 
-import { gqlQuery } from "./graph.js";
+import { gqlQuery, getProfile } from "./graph.js";
 import type { Version } from "./markets.js";
 import { pickChain, pickVersion, withMarket, assertHexId } from "./tools.js";
 import { swapExactIn, swapV2ExactIn, priceFromSqrt, type TickData } from "./v3math.js";
@@ -86,21 +86,31 @@ async function quoteOnMarket(market: { subgraphId: string; version: Version; cha
   }
 
   // ── V3 / V4 ────────────────────────────────────────────────────────────────
-  const isV4 = market.version === "v4";
-  const hooksField = isV4 ? "hooks" : "";
+  // Field names are DETECTED, not assumed. V3 uses feeTier/sqrtPrice; the
+  // uniswap-v4-ethereum deployment uses fee/tickSpacing/sqrtPriceX96. Hardcoding
+  // either set makes the other silently unqueryable.
+  const prof = await getProfile(market.subgraphId);
+  if (!prof.hasTicks) {
+    return { quotable: false, version: market.version, chain: market.chain, pool: id,
+      reason: `The ${market.version.toUpperCase()} subgraph for ${market.chain} exposes no \`ticks\` entity, so the liquidity curve is unavailable and no trustworthy quote can be computed. Pool facts are still available via pool_info.` };
+  }
+  const feeF = prof.poolFeeField ?? "feeTier";
+  const sqrtF = prof.poolSqrtField ?? "sqrtPrice";
+  const extra = [prof.hasHooks ? "hooks" : "", prof.hasTickSpacing ? "tickSpacing" : ""].filter(Boolean).join(" ");
   const d = await gqlQuery<{ pool: any }>(market.subgraphId, `{
-    pool(id:"${id}") { id feeTier liquidity sqrtPrice tick ${hooksField}
+    pool(id:"${id}") { id ${feeF} liquidity ${sqrtF} tick ${extra}
       token0 { id symbol decimals } token1 { id symbol decimals } } }`);
   const p = d.pool;
+  if (p) { p.__fee = p[feeF]; p.__sqrt = p[sqrtF]; }
   if (!p) return { quotable: false, reason: `No ${market.version.toUpperCase()} pool ${id} on ${market.chain}.` };
 
   // V4 hooks can rewrite pricing entirely (dynamic fees, custom curves). Simulating
   // the vanilla curve for a hooked pool would produce a confident, wrong number —
   // and on Base the highest-volume V4 pools are hook-driven with zero in-range
   // liquidity, so this is the common case, not an edge case.
-  if (isV4 && p.hooks && p.hooks.toLowerCase() !== ZERO_ADDRESS) {
+  if (p.hooks && p.hooks.toLowerCase() !== ZERO_ADDRESS) {
     return {
-      quotable: false, version: "v4", chain: market.chain, pool: p.id, hooks: p.hooks,
+      quotable: false, version: market.version, chain: market.chain, pool: p.id, hooks: p.hooks,
       reason: "This V4 pool has a hook attached. Hooks can override fees and the pricing curve, "
         + "so an offline simulation of the standard curve would be wrong. Quote it on-chain via the "
         + "V4 Quoter instead.",
@@ -117,7 +127,7 @@ async function quoteOnMarket(market: { subgraphId: string; version: Version; cha
   }
   const [tIn, tOut]: [TokenLite, TokenLite] = zeroForOne ? [p.token0, p.token1] : [p.token1, p.token0];
 
-  const feePips = Number(p.feeTier);
+  const feePips = Number(p.__fee);
   const cur = Number(p.tick);
   // Not every deployment exposes `ticks` — Uniswap V3 on Base does not
   // ("Type `Query` has no field `ticks`"). Without the liquidity curve there is
@@ -129,7 +139,7 @@ async function quoteOnMarket(market: { subgraphId: string; version: Version; cha
     t = await gqlQuery<{ ticks: Array<{ tickIdx: string; liquidityNet: string }> }>(
       market.subgraphId,
       `{ ticks(first: 1000, orderBy: tickIdx,
-           where: { poolAddress: "${id}", tickIdx_gte: ${cur - TICK_WINDOW}, tickIdx_lte: ${cur + TICK_WINDOW} })
+           where: { ${prof.tickPoolField ?? "pool"}: "${id}", tickIdx_gte: ${cur - TICK_WINDOW}, tickIdx_lte: ${cur + TICK_WINDOW} })
          { tickIdx liquidityNet } }`,
     );
   } catch (e) {
@@ -152,13 +162,13 @@ async function quoteOnMarket(market: { subgraphId: string; version: Version; cha
 
   const raw = scale(amountIn, Number(tIn.decimals));
   const res = swapExactIn(
-    { sqrtPriceX96: p.sqrtPrice, liquidity: p.liquidity, tick: cur, feePips, ticks },
+    { sqrtPriceX96: p.__sqrt, liquidity: p.liquidity, tick: cur, feePips, ticks },
     raw, zeroForOne,
   );
 
   const outH = human(res.amountOut, Number(tOut.decimals));
   const effective = outH / amountIn;
-  const spotT1PerT0 = priceFromSqrt(BigInt(p.sqrtPrice), Number(p.token0.decimals), Number(p.token1.decimals));
+  const spotT1PerT0 = priceFromSqrt(BigInt(p.__sqrt), Number(p.token0.decimals), Number(p.token1.decimals));
   const spot = zeroForOne ? spotT1PerT0 : 1 / spotT1PerT0;
   const feeFrac = feePips / 1e6;
   // Impact measured against the fee-adjusted spot, so the number isolates depth

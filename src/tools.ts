@@ -311,7 +311,7 @@ export async function topPools(args: { chain: string; version?: string; first?: 
     const d = await gqlQuery<{ pools: any[] }>(
       m.subgraphId,
       `query($n:Int!){ pools(first:$n, orderBy:volumeUSD, orderDirection:desc){
-        id token0{symbol id} token1{symbol id} feeTier volumeUSD feesUSD totalValueLockedUSD txCount } }`,
+        id token0{symbol id} token1{symbol id} ${p.poolFeeField ?? "feeTier"} volumeUSD ${p.poolFeesField ?? "feesUSD"} txCount } }`,
       { n },
     );
     return {
@@ -319,7 +319,8 @@ export async function topPools(args: { chain: string; version?: string; first?: 
       ranked_by: "volumeUSD (lifetime)",
       pools: (d.pools ?? []).map((x) => ({
         pool: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`,
-        fee_tier: num(x.feeTier), volume_usd: num(x.volumeUSD), fees_usd: num(x.feesUSD),
+        fee_tier: num(x[p.poolFeeField ?? "feeTier"]), volume_usd: num(x.volumeUSD),
+        fees_usd: num(x[p.poolFeesField ?? "feesUSD"]),
         tvl_usd: null, tx_count: num(x.txCount),
       })),
       note: TVL_NOTE,
@@ -341,7 +342,7 @@ export async function findPool(args: { tokenA: string; tokenB: string; chain: st
     const ids = [a.id, b.id];
 
     const entity = p.style === "pair" ? "pairs" : "pools";
-    const fee = p.style === "pair" ? "" : "feeTier";
+    const fee = p.style === "pair" ? "" : (p.poolFeeField ?? "feeTier");
     const tvl = p.style === "pair" ? "reserveUSD" : "totalValueLockedUSD";
     const d = await gqlQuery<any>(
       m.subgraphId,
@@ -355,7 +356,7 @@ export async function findPool(args: { tokenA: string; tokenB: string; chain: st
       tokens: { a: { symbol: a.symbol, address: a.id }, b: { symbol: b.symbol, address: b.id } },
       pools: rows.map((x: any) => ({
         id: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`,
-        ...(p.style === "pool" ? { fee_tier: num(x.feeTier) } : {}),
+        ...(p.style === "pool" ? { fee_tier: num(x[p.poolFeeField ?? "feeTier"]) } : {}),
         volume_usd: num(x.volumeUSD), tvl_usd: p.style === "pair" ? num(x[tvl]) : null, tx_count: num(x.txCount),
       })),
       note: rows.length ? TVL_NOTE : "No pool found for this pair on this version/chain — try another version (v2/v3/v4).",
@@ -389,7 +390,7 @@ export async function poolInfo(args: { pool: string; chain: string; version?: st
     const d = await gqlQuery<{ pools: any[] }>(
       m.subgraphId,
       `query($id:ID!){ pools(where:{id:$id}){ id token0{symbol id} token1{symbol id}
-        feeTier liquidity token0Price token1Price volumeUSD feesUSD totalValueLockedUSD
+        ${p.poolFeeField ?? "feeTier"} liquidity token0Price token1Price volumeUSD ${p.poolFeesField ?? "feesUSD"}
         totalValueLockedToken0 totalValueLockedToken1 txCount } }`,
       { id },
     );
@@ -397,9 +398,9 @@ export async function poolInfo(args: { pool: string; chain: string; version?: st
     if (!x) throw new Error(`Pool ${args.pool} not found on Uniswap ${m.version} ${chain}.`);
     return {
       market: { version: m.version, chain, subgraph_id: m.subgraphId },
-      pool: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`, fee_tier: num(x.feeTier),
+      pool: x.id, pair: `${x.token0.symbol}/${x.token1.symbol}`, fee_tier: num(x[p.poolFeeField ?? "feeTier"]),
       token0Price: num(x.token0Price), token1Price: num(x.token1Price),
-      volume_usd: num(x.volumeUSD), fees_usd: num(x.feesUSD), tvl_usd: null,
+      volume_usd: num(x.volumeUSD), fees_usd: num(x[p.poolFeesField ?? "feesUSD"]), tvl_usd: null,
       tvl_token0: null, tvl_token1: null,
       tx_count: num(x.txCount), note: TVL_NOTE,
     };

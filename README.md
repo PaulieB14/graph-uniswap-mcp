@@ -49,7 +49,7 @@ a reason instead of a figure when it cannot be trusted:
 | **V4 pool with a hook** | Hooks can override the fee and the pricing curve, so simulating the vanilla curve would be wrong. On Base the top V4 pools by volume are hook-driven with zero in-range liquidity — this is the common case, not an edge case. |
 | **Trade larger than the liquidity in view** | The tick window is ±20,000 ticks. A trade that consumes all of it gets a `lower_bound_amount_out`, explicitly not a quote. |
 | **Zero in-range liquidity** | Nothing to swap against at the current tick. |
-| **No `ticks` entity on the deployment** | The liquidity curve is unknown. (V3 on Base is affected.) |
+| **No `ticks` entity on the deployment** | The liquidity curve is unknown. V3 on Base is affected; V3 elsewhere and V4 on Ethereum are fine. |
 
 ## TVL is reported as `null`, deliberately
 
@@ -90,7 +90,7 @@ aliases (`eth`, `arb`, `matic`, `bnb`, …) are accepted.
 
 | Chain | V2 | V3 | V4 |
 |---|---|---|---|
-| Ethereum | ✅ | ✅ **default** | ⛔ indexers returning 400 |
+| Ethereum | ✅ | ✅ **default** | ✅ pin `v4` — quotable |
 | Arbitrum | — | ✅ **default** | ✅ pin `v4` |
 | Base | ✅ | ✅ **default** | ⚠️ pin `v4` — see below |
 | Polygon | — | ✅ **default** | — |
@@ -102,8 +102,14 @@ which picked the *most queried* market rather than the most useful one: `chain:"
 V4, whose top pools by volume are zero-liquidity hook pools reporting billions in fabricated
 volume. Pinning a version always overrides this.
 
-`⛔` markets refuse with an explanation rather than erroring obscurely. `⚠️` Base V4 is servable
-when pinned, but is not chosen for you.
+`⚠️` Base V4 is servable when pinned, but is not chosen for you: its top pools by volume are
+hook pools with zero in-range liquidity. Uniswap V4 on **Ethereum** is the opposite — real
+hookless pairs (USDC/USDT, WBTC/cbBTC, ETH/USDC) with a `ticks` entity, so `quote_swap` works
+there too.
+
+Pool field names are **detected, not assumed**: V3 uses `feeTier`/`sqrtPrice`/`feesUSD` while
+uniswap-v4-ethereum uses `fee`/`sqrtPriceX96`/`totalFeesUSD` and exposes `tickSpacing`. A new
+deployment with either convention works without a code change.
 
 Ranking is always by `volumeUSD`, never TVL — a single spam-token pool can claim trillions in fake
 liquidity, so a TVL sort returns junk at the top. This holds even on subgraphs whose per-pool TVL

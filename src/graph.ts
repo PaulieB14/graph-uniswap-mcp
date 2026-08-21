@@ -43,7 +43,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // a stall (abort) fails fast so the tools can fall back to another version.
 const HTTP_TIMEOUT_MS = Number(process.env.GRAPH_HTTP_TIMEOUT_MS) || 15000;
 const MAX_ATTEMPTS = Math.max(1, Number(process.env.GRAPH_MAX_ATTEMPTS) || 2);
-const TOTAL_BUDGET_MS = Number(process.env.GRAPH_TOTAL_BUDGET_MS) || 25000;
+const TOTAL_BUDGET_MS = Number(process.env.GRAPH_TOTAL_BUDGET_MS) || 32000;
 
 export interface QueryOpts {
   /** per-attempt HTTP timeout in ms (default GRAPH_HTTP_TIMEOUT_MS / 8000) */
@@ -111,10 +111,25 @@ export async function gqlQuery<T = any>(
       const msg = e instanceof Error ? e.message : String(e);
       // Deterministic — never retry these.
       if (msg.startsWith("subgraph query error:") || msg.startsWith("gateway HTTP ")) throw e;
-      // A stall (abort/timeout) will almost certainly re-stall on retry — fail
-      // fast so the caller can fall back to another version instead of burning
-      // another full timeout on the same unresponsive indexer.
-      if (isAbort(e)) throw timeoutError(timeoutMs, subgraphId);
+      // A stall gets ONE retry, within the remaining budget.
+      //
+      // The old comment here claimed a stall "will almost certainly re-stall",
+      // so it failed fast to let the caller fall back to another version. Two
+      // things were wrong with that. The gateway re-routes per request, so a
+      // retry usually lands on a DIFFERENT indexer — measured 2026-08-20 on
+      // Uniswap V3 Polygon, the same query alternated between a 15s stall and
+      // an 80-800ms success. And a chain with only one mapped version (Polygon
+      // is exactly that) has nothing to fall back TO, so fast-fail just meant
+      // fail. The total budget still bounds this, so a genuinely dead indexer
+      // costs one extra attempt rather than an unbounded wait.
+      if (isAbort(e)) {
+        const remaining = TOTAL_BUDGET_MS - (Date.now() - start);
+        if (attempt < maxAttempts - 1 && remaining > 2000) {
+          await sleep(300);
+          continue;
+        }
+        throw timeoutError(timeoutMs, subgraphId);
+      }
       // Genuine network error (connection reset, DNS, etc.) — retry if attempts remain.
       if (attempt < maxAttempts - 1) {
         await sleep(400 * (attempt + 1));
@@ -141,6 +156,21 @@ export interface SchemaProfile {
   hasSwaps: boolean;
   /** whether a Position entity exists (V3/V4 LP positions) */
   hasPositions: boolean;
+  /** Pool fee field: "feeTier" (V3 + most V4 forks) | "fee" (uniswap-v4-ethereum) */
+  poolFeeField: string | null;
+  /** Pool sqrt-price field: "sqrtPrice" (V3) | "sqrtPriceX96" (V4) */
+  poolSqrtField: string | null;
+  /** Pool exposes an explicit tickSpacing (V4) rather than implying it from the fee tier */
+  hasTickSpacing: boolean;
+  /** Pool exposes a `hooks` address (V4 only) */
+  hasHooks: boolean;
+  /** whether a Tick entity exists — no ticks, no swap simulation */
+  hasTicks: boolean;
+  /** Pool lifetime-fees field: "feesUSD" (V3) | "totalFeesUSD" (uniswap-v4-ethereum) */
+  poolFeesField: string | null;
+  /** Tick->pool filter field: "poolAddress" (V3) | "pool" (V4). `pool` exists on
+   *  both, but detect anyway so a deployment exposing only one still works. */
+  tickPoolField: string | null;
 }
 
 const profileCache = new Map<string, SchemaProfile>();
@@ -149,6 +179,8 @@ const INTROSPECT = `{
   q: __type(name:"Query"){ fields{ name } }
   tok: __type(name:"Token"){ fields{ name } }
   bun: __type(name:"Bundle"){ fields{ name } }
+  pool: __type(name:"Pool"){ fields{ name } }
+  tick: __type(name:"Tick"){ fields{ name } }
 }`;
 
 /** Introspect a subgraph's field conventions once, then cache. */
@@ -160,11 +192,18 @@ export async function getProfile(subgraphId: string): Promise<SchemaProfile> {
     q: { fields: { name: string }[] };
     tok?: { fields: { name: string }[] } | null;
     bun?: { fields: { name: string }[] } | null;
+    pool?: { fields: { name: string }[] } | null;
+    tick?: { fields: { name: string }[] } | null;
   }>(subgraphId, INTROSPECT);
 
   const qFields = new Set((data.q?.fields ?? []).map((f) => f.name));
   const tokFields = new Set((data.tok?.fields ?? []).map((f) => f.name));
   const bunFields = new Set((data.bun?.fields ?? []).map((f) => f.name));
+  // V4 deployments are not uniform with V3 OR with each other: uniswap-v4-ethereum
+  // uses fee/tickSpacing/sqrtPriceX96 where V3 uses feeTier/sqrtPrice. Detect rather
+  // than assume, so a new deployment does not need a code change to be quotable.
+  const poolFields = new Set((data.pool?.fields ?? []).map((f) => f.name));
+  const tickFields = new Set((data.tick?.fields ?? []).map((f) => f.name));
 
   const style: "pair" | "pool" = qFields.has("pairs") && !qFields.has("pools") ? "pair" : "pool";
   const entity: "pairs" | "pools" = style === "pair" ? "pairs" : "pools";
@@ -181,6 +220,13 @@ export async function getProfile(subgraphId: string): Promise<SchemaProfile> {
     tokenDerivedField,
     hasSwaps: qFields.has("swaps"),
     hasPositions: qFields.has("positions"),
+    poolFeeField: ["feeTier", "fee"].find((f) => poolFields.has(f)) ?? null,
+    poolSqrtField: ["sqrtPrice", "sqrtPriceX96"].find((f) => poolFields.has(f)) ?? null,
+    hasTickSpacing: poolFields.has("tickSpacing"),
+    hasHooks: poolFields.has("hooks"),
+    hasTicks: qFields.has("ticks"),
+    poolFeesField: ["feesUSD", "totalFeesUSD"].find((f) => poolFields.has(f)) ?? null,
+    tickPoolField: ["pool", "poolAddress"].find((f) => tickFields.has(f)) ?? null,
   };
   profileCache.set(subgraphId, profile);
   return profile;
